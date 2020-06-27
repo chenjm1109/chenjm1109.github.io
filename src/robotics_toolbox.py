@@ -667,9 +667,38 @@ def fkin_space(M, Slist, thetalist):
     """
     T = np.array(M)
     for i in range(len(thetalist) - 1, -1, -1):
-        T = np.dot(matrix_exp_6(vec_to_se3(np.array(Slist)[:, i] \
-                                       * thetalist[i])), T)
+        T = np.dot(matrix_exp_6(vec_to_se3(np.array(Slist)[:, i] * thetalist[i])), T)
     return T
+
+def fkin_link_space(Mlist, Slist, thetalist):
+    """计算串联机器人各连杆的正运动学
+    :param Mlist: 零位时，各连杆的位形矩阵（质心坐标系相对于基坐标系）
+    :param Slist: 零位时，各关节的螺旋轴，以空间坐标系为参考系
+    :param thetalist: 各关节的位置
+    :return: 指定关节位置下，各连杆位形矩阵
+             (i.t.o Space Frame)
+    Example Input:
+        M = np.array([[-1, 0,  0, 0],
+                      [ 0, 1,  0, 6],
+                      [ 0, 0, -1, 2],
+                      [ 0, 0,  0, 1]])
+        Slist = np.array([[0, 0,  1,  4, 0,    0],
+                          [0, 0,  0,  0, 1,    0],
+                          [0, 0, -1, -6, 0, -0.1]]).T
+        thetalist = np.array([np.pi / 2.0, 3, np.pi])
+    Output:
+        np.array([[0, 1,  0,         -5],
+                  [1, 0,  0,          4],
+                  [0, 0, -1, 1.68584073],
+                  [0, 0,  0,          1]])
+    """
+    Tlist = np.array(Mlist).copy()
+    for i in range(Tlist.shape[0] - 1):
+        T = Tlist[i+1]
+        for j in range(i, -1, -1):
+            T = np.dot(matrix_exp_6(vec_to_se3(np.array(Slist)[:, j] * thetalist[j])), T)
+        Tlist[i+1] = T
+    return Tlist
 
 def jacobian_body(Blist, thetalist):
     """计算开链机器人的物体雅可比矩阵
@@ -793,7 +822,7 @@ def ikin_body(Blist, M, T, thetalist0, eomg, ev):
               or np.linalg.norm([Vb[3], Vb[4], Vb[5]]) > ev
     return (thetalist, not err)
 
-def ikin_space(Slist, M, T, thetalist0, eomg, ev):
+def ikin_space(Slist, M, T, thetalist0, eomg, ev, maxiterations = 20):
     """Computes inverse kinematics in the space frame for an open chain robot
     :param Slist: The joint screw axes in the space frame when the
                   manipulator is at the home position, in the format of a
@@ -838,7 +867,6 @@ def ikin_space(Slist, M, T, thetalist0, eomg, ev):
     """
     thetalist = np.array(thetalist0).copy()
     i = 0
-    maxiterations = 20
     Tsb = fkin_space(M,Slist, thetalist)
     Vs = np.dot(adjoint(Tsb), \
                 se3_to_vec(matrix_log_6(np.dot(trans_inv(Tsb), T))))
@@ -1420,8 +1448,77 @@ def cartesian_trajectory(Xstart, Xend, Tf, N, method):
 *********************************************
 '''
 
+def pid_control(thetalist, dthetalist, eint, thetalistd, dthetalistd, Kp, Ki, Kd):
+    """PID控制所需的关节力矩
+    :param thetalist: n-vector of joint variables
+    :param dthetalist: n-vector of joint rates
+    :param eint: n-vector of the time-integral of joint errors
+    :param g: Gravity vector g
+    :param Mlist: List of link frames {i} relative to {i-1} at the home
+                  position
+    :param Glist: Spatial inertia matrices Gi of the links
+    :param Slist: Screw axes Si of the joints in a space frame, in the format
+                  of a matrix with axes as the columns
+    :param thetalistd: n-vector of reference joint variables
+    :param dthetalistd: n-vector of reference joint velocities
+    :param ddthetalistd: n-vector of reference joint accelerations
+    :param Kp: The feedback proportional gain (identical for each joint)
+    :param Ki: The feedback integral gain (identical for each joint)
+    :param Kd: The feedback derivative gain (identical for each joint)
+    :return: The vector of joint forces/torques computed by the feedback
+             linearizing controller at the current instant
+    Example Input:
+        thetalist = np.array([0.1, 0.1, 0.1])
+        dthetalist = np.array([0.1, 0.2, 0.3])
+        eint = np.array([0.2, 0.2, 0.2])
+        thetalistd = np.array([1.0, 1.0, 1.0])
+        dthetalistd = np.array([2, 1.2, 2])
+        Kp = 1.3
+        Ki = 1.2
+        Kd = 1.1
+    Output:
+        np.array([133.00525246, -29.94223324, -3.03276856])
+    """
+    e = np.subtract(thetalistd, thetalist)
+    return  Kp * e + Ki * (np.array(eint) + e) + Kd * np.subtract(dthetalistd, dthetalist)
+
+def pid_gravity(thetalist, dthetalist, eint, g, Mlist, Glist, Slist, thetalistd, dthetalistd, Kp, Ki, Kd):
+    """PID + 重力补偿所需的关节力矩
+    :param thetalist: n-vector of joint variables
+    :param dthetalist: n-vector of joint rates
+    :param eint: n-vector of the time-integral of joint errors
+    :param g: Gravity vector g
+    :param Mlist: List of link frames {i} relative to {i-1} at the home
+                  position
+    :param Glist: Spatial inertia matrices Gi of the links
+    :param Slist: Screw axes Si of the joints in a space frame, in the format
+                  of a matrix with axes as the columns
+    :param thetalistd: n-vector of reference joint variables
+    :param dthetalistd: n-vector of reference joint velocities
+    :param ddthetalistd: n-vector of reference joint accelerations
+    :param Kp: The feedback proportional gain (identical for each joint)
+    :param Ki: The feedback integral gain (identical for each joint)
+    :param Kd: The feedback derivative gain (identical for each joint)
+    :return: The vector of joint forces/torques computed by the feedback
+             linearizing controller at the current instant
+    Example Input:
+        thetalist = np.array([0.1, 0.1, 0.1])
+        dthetalist = np.array([0.1, 0.2, 0.3])
+        eint = np.array([0.2, 0.2, 0.2])
+        thetalistd = np.array([1.0, 1.0, 1.0])
+        dthetalistd = np.array([2, 1.2, 2])
+        Kp = 1.3
+        Ki = 1.2
+        Kd = 1.1
+    Output:
+        np.array([133.00525246, -29.94223324, -3.03276856])
+    """
+    e = np.subtract(thetalistd, thetalist)
+    return  Kp * e + Ki * (np.array(eint) + e) + Kd * np.subtract(dthetalistd, dthetalist) \
+            + gravity_forces(thetalist, g, Mlist, Glist, Slist)         
+               
 def computed_torque(thetalist, dthetalist, eint, g, Mlist, Glist, Slist, thetalistd, dthetalistd, ddthetalistd, Kp, Ki, Kd):
-    """Computes the joint control torques at a particular time instant
+    """计算力矩控制所需的关节力矩
     :param thetalist: n-vector of joint variables
     :param dthetalist: n-vector of joint rates
     :param eint: n-vector of the time-integral of joint errors
@@ -1484,7 +1581,8 @@ def computed_torque(thetalist, dthetalist, eint, g, Mlist, Glist, Slist, thetali
            + inverse_dynamics(thetalist, dthetalist, ddthetalistd, g, \
                              [0, 0, 0, 0, 0, 0], Mlist, Glist, Slist)
 
-def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, thetamatd, dthetamatd, ddthetamatd, gtilde, Mtildelist, Gtildelist, Kp, Ki, Kd, dt, intRes):
+def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, thetamatd, dthetamatd, ddthetamatd, gtilde, Mtildelist, Gtildelist, Kp, Ki, Kd, dt, intRes, 
+                     method = "computed_torque"):
     """Simulates the computed torque controller over a given desired
     trajectory
     :param thetalist: n-vector of initial joint variables
@@ -1615,10 +1713,19 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
     taumat = np.zeros(np.array(thetamatd).shape)
     thetamat = np.zeros(np.array(thetamatd).shape)
     for i in range(n):
-        ## 到达第i个目标位置所需的力矩，使用**计算力矩控制**
-        taulist = computed_torque(thetacurrent, dthetacurrent, eint, gtilde, \
-                         Mtildelist, Gtildelist, Slist, thetamatd[:, i], \
-                         dthetamatd[:, i], ddthetamatd[:, i], Kp, Ki, Kd)
+        ## 到达第i个目标位置所需的力矩
+        # 计算力矩控制
+        if method == "computed_torque":
+            taulist = computed_torque(thetacurrent, dthetacurrent, eint, gtilde, \
+                             Mtildelist, Gtildelist, Slist, thetamatd[:, i], \
+                             dthetamatd[:, i], ddthetamatd[:, i], Kp, Ki, Kd)
+        # pid控制
+        elif method == "pid_control":
+            taulist = pid_control(thetacurrent, dthetacurrent, eint, thetamatd[:, i], dthetamatd[:, i], Kp, Ki, Kd)
+        # pid+重力补偿控制
+        elif method == "pid_gravity":
+            taulist = pid_gravity(thetacurrent, dthetacurrent, eint, g, Mlist, Glist, Slist, thetamatd[:, i], dthetamatd[:, i], Kp, Ki, Kd)
+        
         ## 使用正向动力学计算实际的关节位置和速度
         for j in range(intRes):
             ddthetalist = forward_dynamics(thetacurrent, dthetacurrent, taulist, g,
@@ -1657,10 +1764,81 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
 
 
 if __name__ == "__main__":
-    trans = np.array([[1, 0,  0, 0],
-                              [0, 0, -1, 0],
-                              [0, 1,  0, 3],
-                              [0, 0,  0, 1]])
-    print(trans_to_Rp(trans))
-    
-    
+    thetalist = np.array([0.1, 0.1, 0.1])
+    dthetalist = np.array([0.1, 0.2, 0.3])
+    ## 初始化机器人的参数，以三自由度串联机器人为例
+    g = np.array([0, 0, -9.8]) # 重力加速度
+    # 零位时，相邻连杆间的变换矩阵
+    M01 = np.array([[1, 0, 0,        0],
+                    [0, 1, 0,        0],
+                    [0, 0, 1, 0.089159],
+                    [0, 0, 0,        1]])
+    M12 = np.array([[ 0, 0, 1,    0.28],
+                    [ 0, 1, 0, 0.13585],
+                    [-1, 0, 0,       0],
+                    [ 0, 0, 0,       1]])
+    M23 = np.array([[1, 0, 0,       0],
+                    [0, 1, 0, -0.1197],
+                    [0, 0, 1,   0.395],
+                    [0, 0, 0,       1]])
+    M34 = np.array([[1, 0, 0,       0],
+                    [0, 1, 0,       0],
+                    [0, 0, 1, 0.14225],
+                    [0, 0, 0,       1]])
+    # 各连杆的惯量矩阵，以空间坐标系为参考系
+    G1 = np.diag([0.010267, 0.010267, 0.00666, 3.7, 3.7, 3.7])
+    G2 = np.diag([0.22689, 0.22689, 0.0151074, 8.393, 8.393, 8.393])
+    G3 = np.diag([0.0494433, 0.0494433, 0.004095, 2.275, 2.275, 2.275])
+    Glist = np.array([G1, G2, G3])
+    Mlist = np.array([M01, M12, M23, M34])
+    # 各关节运动旋量
+    Slist = np.array([[1, 0, 1,      0, 1,     0],
+                      [0, 1, 0, -0.089, 0,     0],
+                      [0, 1, 0, -0.089, 0, 0.425]]).T
+    dt = 0.01 # 关节轨迹位置间的时间间隔
+    ## 创建用于跟踪的轨迹
+    thetaend = np.array([np.pi / 2, np.pi, 1.5 * np.pi])
+    Tf = 1
+    N = int(1.0 * Tf / dt)
+    method = 5
+    traj = joint_trajectory(thetalist, thetaend, Tf, N, method)
+    thetamatd = np.array(traj).copy()
+    dthetamatd = np.zeros((N, 3))
+    ddthetamatd = np.zeros((N, 3))
+    dt = Tf / (N - 1.0)
+    for i in range(np.array(traj).shape[0] - 1):
+        dthetamatd[i + 1, :] = (thetamatd[i + 1, :] - thetamatd[i, :]) / dt
+        ddthetamatd[i + 1, :] = (dthetamatd[i + 1, :] - dthetamatd[i, :]) / dt
+    # Possibly wrong robot description (Example with 3 links)
+    gtilde = np.array([0.8, 0.2, -8.8])
+    Mhat01 = np.array([[1, 0, 0,   0],
+                       [0, 1, 0,   0],
+                       [0, 0, 1, 0.1],
+                       [0, 0, 0,   1]])
+    Mhat12 = np.array([[ 0, 0, 1, 0.3],
+                       [ 0, 1, 0, 0.2],
+                       [-1, 0, 0,   0],
+                       [ 0, 0, 0,   1]])
+    Mhat23 = np.array([[1, 0, 0,    0],
+                       [0, 1, 0, -0.2],
+                       [0, 0, 1,  0.4],
+                       [0, 0, 0,    1]])
+    Mhat34 = np.array([[1, 0, 0,   0],
+                       [0, 1, 0,   0],
+                       [0, 0, 1, 0.2],
+                       [0, 0, 0,   1]])
+    Ghat1 = np.diag([0.1, 0.1, 0.1, 4, 4, 4])
+    Ghat2 = np.diag([0.3, 0.3, 0.1, 9, 9, 9])
+    Ghat3 = np.diag([0.1, 0.1, 0.1, 3, 3, 3])
+    Gtildelist = np.array([Ghat1, Ghat2, Ghat3])
+    Mtildelist = np.array([Mhat01, Mhat12, Mhat23, Mhat34])
+    Ftipmat = np.ones((np.array(traj).shape[0], 6))
+    Kp = 20
+    Ki = 10
+    Kd = 18
+    intRes = 8
+    taumat,thetamat \
+    = simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, \
+                         Glist, Slist, thetamatd, dthetamatd, \
+                         ddthetamatd, gtilde, Mtildelist, Gtildelist, \
+                         Kp, Ki, Kd, dt, intRes)

@@ -15,9 +15,28 @@ from matplotlib.animation import FuncAnimation # Animation
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator, FormatStrFormatter
 
-import xm_robot as xr
+import robox as rb
 import robotics_toolbox as rtb
 
+
+def show_robot(ax, Tlist, scale_value = 1.0):
+    """展示开链机器人
+    :param ax: 绘图对象
+    :param Tlist: 各连杆的变换矩阵，连杆坐标系原点应在近基座端的关节上，建议用x轴作为旋转轴方向
+    :param scale_value: 绘图缩放系数
+    :return: None
+    """
+    ## 绘制连杆
+    for i in range(Tlist.shape[0] - 1):
+        ax.plot([Tlist[i, 0, 3], Tlist[i + 1, 0, 3]], 
+                [Tlist[i, 1, 3], Tlist[i + 1, 1, 3]],
+                [Tlist[i, 2, 3], Tlist[i + 1, 2, 3]],
+                color = "black", linewidth = 5.0)
+    
+    ## 绘制连杆坐标系
+    print(Tlist)
+    for i in range(Tlist.shape[0]):
+        show_frame(ax, Tlist[i], scale_value)
 
 def show_frame(ax, trans, scale_value = 1.0):
     '''
@@ -41,12 +60,11 @@ def show_frame(ax, trans, scale_value = 1.0):
     '''
     R, p = rtb.trans_to_Rp(trans)
     color_list = ["red", "green", "blue"]
-    print(trans)
     for i in range(3):
         ax.plot([trans[0, 3], trans[0, 3] + trans[0, i] * scale_value],
                 [trans[1, 3], trans[1, 3] + trans[1, i] * scale_value],
                 [trans[2, 3], trans[2, 3] + trans[2, i] * scale_value],
-                color = color_list[i])
+                color = color_list[i], linewidth = 3.0)
     
 def show_animate_line_2d(line_set, xlabel = "x", ylabel = "y", color = "orange"):
     fig2d = plt.figure(figsize=(6, 4), num = 2)
@@ -69,7 +87,7 @@ def show_animate_line_2d(line_set, xlabel = "x", ylabel = "y", color = "orange")
 def plot_position_workspace_surf(ori = np.array([0.0, 0.0, 0.0])):
     '''绘制位置工作空间包络面
     '''
-    Robot = xr.Puma560()
+    Robot = rb.Puma560()
     
     
     # 弧度-角度互转
