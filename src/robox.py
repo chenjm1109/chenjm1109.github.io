@@ -156,9 +156,6 @@ class Robot:
                              Glist, Slist, thetamatd, dthetamatd, \
                              ddthetamatd, gtilde, Mtildelist, Gtildelist, \
                              Kp, Ki, Kd, dt, intRes, method = "computed_torque")
-        
-        
-
 
 if __name__ == "__main__":
     A = Robot()

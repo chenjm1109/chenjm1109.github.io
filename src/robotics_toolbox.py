@@ -13,6 +13,7 @@ Date:   June, 2020
 
 import numpy as np
 import math
+import time
 
 '''
 *** 基本功能函数 ***
@@ -1712,8 +1713,10 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
     eint = np.zeros((m,1)).reshape(m,)
     taumat = np.zeros(np.array(thetamatd).shape)
     thetamat = np.zeros(np.array(thetamatd).shape)
+    time_total = 0.0
     for i in range(n):
         ## 到达第i个目标位置所需的力矩
+        time_start = time.time()
         # 计算力矩控制
         if method == "computed_torque":
             taulist = computed_torque(thetacurrent, dthetacurrent, eint, gtilde, \
@@ -1725,6 +1728,8 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
         # pid+重力补偿控制
         elif method == "pid_gravity":
             taulist = pid_gravity(thetacurrent, dthetacurrent, eint, g, Mlist, Glist, Slist, thetamatd[:, i], dthetamatd[:, i], Kp, Ki, Kd)
+        time_end = time.time()
+        time_total = time_total + time_end - time_start
         
         ## 使用正向动力学计算实际的关节位置和速度
         for j in range(intRes):
@@ -1736,6 +1741,8 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
         thetamat[:, i] = thetacurrent
         # 误差积分eint，用于计算PID的积分增益
         eint = np.add(eint, dt * np.subtract(thetamatd[:, i], thetacurrent))
+        
+    print("关节力矩计算过程共耗时%.4f秒"%(time_total))
     # Output using matplotlib to plot
     try:
         import matplotlib.pyplot as plt
