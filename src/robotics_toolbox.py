@@ -14,6 +14,7 @@ Date:   June, 2020
 import numpy as np
 import math
 import time
+import matplotlib.pyplot as plt
 
 '''
 *** 基本功能函数 ***
@@ -1281,8 +1282,41 @@ def quintic_time_scaling(Tf, t):
     """
     return 10 * (1.0 * t / Tf) ** 3 - 15 * (1.0 * t / Tf) ** 4 \
            + 6 * (1.0 * t / Tf) ** 5
+           
+def trapezoidal_time_scaling(Tf, t, v = None, a = None):
+    """计算梯形运动曲线的时间标度
+    Args:
+        Tf (float): Total time of the motion in seconds from rest to rest
+        t (float): The current time t satisfying 0 < t < Tf
+        v (float): 恒定速度，默认为None
+        a (float): 加速度，默认为None
+    Returns:
+        st (float): The path parameter s(t) corresponding to a trapezoidal
+                    motion that begins and ends at zero velocity and zero
+                    acceleration
+    Notes:
+        - v 和 a 必须且只能指定一个
+        - 参考《modern robotics》 9.2.2
+    """
+    assert (a != None or v != None), '梯形轨迹的 v 和 a 必须指定其中一个'
+    if v != None:
+        assert (a == None), '不能够同时指定梯形轨迹的 v 和 a'
+        assert ((v * Tf > 1) and (v * Tf <= 2)), '所指定的速度需要满足 1 < v * Tf <= 2'
+        a = (v ** 2) / (v * Tf - 1)
+    else:
+        assert (a * Tf ** 2 >= 4), '所指定的加速度需要满足 a * Tf ** 2 >= 4'
+        v = 0.5 * (a * Tf - a ** 0.5 * (a * Tf ** 2 - 4) ** 0.5)
+    if t <= (v / a):
+        st = 0.5 * a * t ** 2
+    elif (t > (v / a)) and (t <= Tf - (v / a)):
+        st = v * t - v ** 2 / (2 * a)
+    else:
+        st = (2 * a * v * Tf - 2 * v ** 2 - a ** 2 * (t - Tf) ** 2) / (2 * a)
+    return st
+    
+    
 
-def joint_trajectory(thetastart, thetaend, Tf, N, method):
+def joint_trajectory(thetastart, thetaend, Tf, N, method, v = None, a = None):
     """Computes a straight-line trajectory in joint space
     :param thetastart: The initial joint variables
     :param thetaend: The final joint variables
@@ -1316,8 +1350,10 @@ def joint_trajectory(thetastart, thetaend, Tf, N, method):
     for i in range(N):
         if method == 3:
             s = cubic_time_scaling(Tf, timegap * i)
-        else:
+        elif method == 5:
             s = quintic_time_scaling(Tf, timegap * i)
+        elif method == 't':
+            s = trapezoidal_time_scaling(Tf, timegap * i, v = v, a = a)
         traj[:, i] = s * np.array(thetaend) + (1 - s) * np.array(thetastart)
     traj = np.array(traj).T
     return traj
@@ -1442,6 +1478,215 @@ def cartesian_trajectory(Xstart, Xend, Tf, N, method):
                    s * np.array(pend) + (1 - s) * np.array(pstart)], \
                    [[0, 0, 0, 1]]]
     return traj
+
+def multi_cubic_trajectory():
+
+def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=None, qdf=None, verbose=False):
+
+    """
+    MSTRAJ Multi-segment multi-axis trajectory
+    MSTRAJ 多段、多轴轨迹
+    
+    :param viapoints: 路径点集合，每行一个点
+    :type viapoints: numpy.ndarray
+    :param dt: 单步时间
+    :type dt: float (seconds)
+    :param tacc: 加速时间（秒）
+    :type tacc: float
+    :param qdmax: 最大关节速度，默认为 None
+    :type qdmax: array_like or float, optional
+    :param tsegment: 每段运动的最大时间（秒），默认为 None
+    :type tsegment: array_like, optional
+    :param q0: 初始关节位置，默认为 viapoints 的第一行
+    :type q0: array_like, optional
+    :param qd0: 初始关节速度，默认为0
+    :type qd0: array_like, optional
+    :param qdf: 终止关节速度，默认为0
+    :type qdf: array_like, optional
+    :param verbose: 输出的 debug 信息，默认为 False
+    :type verbose: bool, optional
+    :return: trajectory plus extra info
+    :rtype: namedtuple
+     ``TRAJ = MSTRAJ(WP, QDMAX, TSEG, Q0, DT, TACC)`` is a trajectory
+     (KxN) for N axes moving simultaneously through M segment.  Each segment
+     is linear motion and polynomial blends connect the viapoints.  The axes
+     start at ``Q0`` (1xN) if given and pass through the via points defined by the rows of
+     the matrix WP (MxN), and finish at the point defined by the last row of WP.
+     The  trajectory matrix has one row per time step, and one column per
+     axis.  The number of steps in the trajectory K is a function of the
+     number of via points and the time or velocity limits that apply.
+     - WP (MxN) is a matrix of via points, 1 row per via point, one column 
+       per axis.  The last via point is the destination.
+     - QDMAX (1xN) are axis speed limits which cannot be exceeded,
+     - TSEG (1xM) are the durations for each of the K viapoints
+     - Q0 (1xN) are the initial axis coordinates
+     - DT is the time step
+     - TACC (1x1) is the acceleration time used for all segment transitions
+     - TACC (1xM) is the acceleration time per segment, TACC(i) is the acceleration 
+       time for the transition from segment i to segment i+1.  TACC(1) is also 
+       the acceleration time at the start of segment 1.
+     TRAJ = MSTRAJ(WP, QDMAX, TSEG, [], DT, TACC, OPTIONS) as above but the
+     initial coordinates are taken from the first row of WP.
+     TRAJ = MSTRAJ(WP, QDMAX, Q0, DT, TACC, QD0, QDF, OPTIONS) as above
+     but additionally specifies the initial and final axis velocities (1xN).
+     Notes::
+     - Only one of QDMAX or TSEG can be specified, the other is set to [].
+     - If no output arguments are specified the trajectory is plotted.
+     - The path length K is a function of the number of via points, Q0, DT
+       and TACC.
+     - The final via point P(end,:) is the destination.
+     - The motion has M viapoints from Q0 to P(1,:) to P(2,:) ... to P(end,:).
+     - All axes reach their via points at the same time.
+     - Can be used to create joint space trajectories where each axis is a joint
+       coordinate.
+     - Can be used to create Cartesian trajectories where the "axes"
+       correspond to translation and orientation in RPY or Euler angle form.
+     - If qdmax is a scalar then all axes are assumed to have the same
+       maximum speed.
+     See also MTRAJ, LSPB, CTRAJ.
+     Copyright (C) 1993-2017, by Peter I. Corke
+    """
+
+    if q0 is None:
+        q0 = viapoints[0,:]
+        viapoints = viapoints[1:,:]
+    else:
+        assert viapoints.shape[1] == len(q0), 'WP and Q0 must have same number of columns'
+
+    ns, nj = viapoints.shape
+    Tacc = tacc
+    
+    assert not (qdmax is not None and tsegment is not None), 'cannot specify both qdmax and tsegment'
+    ## 如果指定了每段运动的最大时间
+    if qdmax is None:
+        assert tsegment is not None, 'tsegment must be given if qdmax is not'
+        assert len(tsegment) == ns, 'Length of TSEG does not match number of viapoints'
+    ## 如果指定了最大关节速度
+    if tsegment is None:
+        assert qdmax is not None, 'qdmax must be given if tsegment is not'
+        if isinstance(qdmax, (int, float)):
+            # if qdmax is a scalar assume all axes have the same speed
+            qdmax = np.tile(qdmax, (nj,))
+        else:
+            assert len(qdmax) == nj, 'Length of QDMAX does not match number of axes'
+    
+    if isinstance(Tacc, (int, float)):
+        Tacc = np.tile(Tacc, (ns,))
+    else:
+        assert len(Tacc) == ns, 'Tacc is wrong size'
+    if qd0 is None:
+        qd0 = np.zeros((nj,))
+    else:
+        assert len(qd0) == len(q0), 'qd0 is wrong size'
+    if qdf is None:
+        qdf = np.zeros((nj,))
+    else:
+        assert len(qdf) == len(q0), 'qdf is wrong size'
+
+    # set the initial conditions
+    q_prev = q0;
+    qd_prev = qd0;
+
+    clock = 0     # keep track of time
+    arrive = np.zeros((ns,))   # record planned time of arrival at via points
+    tg = np.zeros((0,nj))
+    infolist = []
+    info = namedtuple('mstraj_info', 'slowest segtime axtime clock')
+
+    for seg in range(0, ns):
+        if verbose:
+            print('------------------- segment %d\n' % (seg,))
+
+        # set the blend time, just half an interval for the first segment
+
+        tacc = Tacc[seg]
+
+        tacc = math.ceil(tacc / dt) * dt
+        tacc2 = math.ceil(tacc / 2 / dt) * dt
+        if seg == 0:
+            taccx = tacc2
+        else:
+            taccx = tacc
+
+        # estimate travel time
+        #    could better estimate distance travelled during the blend
+        q_next = viapoints[seg,:]    # current target
+        dq = q_next - q_prev    # total distance to move this segment
+
+        ## probably should iterate over the next section to get qb right...
+        # while 1
+        #   qd_next = (qnextnext - qnext)
+        #   tb = abs(qd_next - qd) ./ qddmax;
+        #   qb = f(tb, max acceleration)
+        #   dq = q_next - q_prev - qb
+        #   tl = abs(dq) ./ qdmax;
+
+        if qdmax is not None:
+            # qdmax is specified, compute slowest axis
+
+            qb = taccx * qdmax / 2       # distance moved during blend
+            tb = taccx
+
+            # convert to time
+            tl = abs(dq) / qdmax
+            #tl = abs(dq - qb) / qdmax
+            tl = np.ceil(tl / dt) * dt
+
+            # find the total time and slowest axis
+            tt = tb + tl
+            slowest = np.argmax(tt)
+            tseg = tt[slowest]
+
+            infolist.append(info(slowest, tseg, tt, clock))
+
+            # best if there is some linear motion component
+            if tseg <= 2*tacc:
+                tseg = 2 * tacc
+
+        elif tsegment is not None:
+            # segment time specified, use that
+            tseg = tsegment[seg]
+            slowest = math.nan
+
+        # log the planned arrival time
+        arrive[seg] = clock + tseg
+        if seg > 0:
+            arrive[seg] += tacc2
+
+        if verbose:
+            print('seg %d, slowest axis %d, time required %.4g\n' % (seg, slowest, tseg))
+
+        ## create the trajectories for this segment
+
+        # linear velocity from qprev to qnext
+        qd = dq / tseg
+
+        # add the blend polynomial
+        print(jtraj)
+        qb = jtraj.jtraj(q0, q_prev + tacc2 * qd, np.arange(0, taccx, dt), qd0=qd_prev, qd1=qd).q
+        tg = np.vstack([tg, qb[1:,:]])
+
+        clock = clock + taccx     # update the clock
+
+        # add the linear part, from tacc/2+dt to tseg-tacc/2
+        for t in np.arange(tacc2 + dt, tseg - tacc2, dt):
+            s = t / tseg
+            q0 = (1 - s) * q_prev + s * q_next       # linear step
+            tg = np.vstack([tg, q0])
+            clock += dt
+
+        q_prev = q_next    # next target becomes previous target
+        qd_prev = qd
+
+    # add the final blend
+    qb = jtraj.jtraj(q0, q_next, np.arange(0, tacc2, dt), qd0=qd_prev, qd1=qdf).q
+    tg = np.vstack([tg, qb[1:,:]])
+
+    print(info)
+
+    infolist.append(info(None, tseg, None, clock))
+    
+    return namedtuple('mstraj', 't q arrive info via')(dt * np.arange(0, tg.shape[0]), tg, arrive, infolist, viapoints)
 
 '''
 *********************************************
@@ -1771,81 +2016,22 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
 
 
 if __name__ == "__main__":
-    thetalist = np.array([0.1, 0.1, 0.1])
-    dthetalist = np.array([0.1, 0.2, 0.3])
-    ## 初始化机器人的参数，以三自由度串联机器人为例
-    g = np.array([0, 0, -9.8]) # 重力加速度
-    # 零位时，相邻连杆间的变换矩阵
-    M01 = np.array([[1, 0, 0,        0],
-                    [0, 1, 0,        0],
-                    [0, 0, 1, 0.089159],
-                    [0, 0, 0,        1]])
-    M12 = np.array([[ 0, 0, 1,    0.28],
-                    [ 0, 1, 0, 0.13585],
-                    [-1, 0, 0,       0],
-                    [ 0, 0, 0,       1]])
-    M23 = np.array([[1, 0, 0,       0],
-                    [0, 1, 0, -0.1197],
-                    [0, 0, 1,   0.395],
-                    [0, 0, 0,       1]])
-    M34 = np.array([[1, 0, 0,       0],
-                    [0, 1, 0,       0],
-                    [0, 0, 1, 0.14225],
-                    [0, 0, 0,       1]])
-    # 各连杆的惯量矩阵，以空间坐标系为参考系
-    G1 = np.diag([0.010267, 0.010267, 0.00666, 3.7, 3.7, 3.7])
-    G2 = np.diag([0.22689, 0.22689, 0.0151074, 8.393, 8.393, 8.393])
-    G3 = np.diag([0.0494433, 0.0494433, 0.004095, 2.275, 2.275, 2.275])
-    Glist = np.array([G1, G2, G3])
-    Mlist = np.array([M01, M12, M23, M34])
-    # 各关节运动旋量
-    Slist = np.array([[1, 0, 1,      0, 1,     0],
-                      [0, 1, 0, -0.089, 0,     0],
-                      [0, 1, 0, -0.089, 0, 0.425]]).T
-    dt = 0.01 # 关节轨迹位置间的时间间隔
-    ## 创建用于跟踪的轨迹
-    thetaend = np.array([np.pi / 2, np.pi, 1.5 * np.pi])
-    Tf = 1
-    N = int(1.0 * Tf / dt)
-    method = 5
-    traj = joint_trajectory(thetalist, thetaend, Tf, N, method)
-    thetamatd = np.array(traj).copy()
-    dthetamatd = np.zeros((N, 3))
-    ddthetamatd = np.zeros((N, 3))
-    dt = Tf / (N - 1.0)
-    for i in range(np.array(traj).shape[0] - 1):
-        dthetamatd[i + 1, :] = (thetamatd[i + 1, :] - thetamatd[i, :]) / dt
-        ddthetamatd[i + 1, :] = (dthetamatd[i + 1, :] - dthetamatd[i, :]) / dt
-    # Possibly wrong robot description (Example with 3 links)
-    gtilde = np.array([0.8, 0.2, -8.8])
-    Mhat01 = np.array([[1, 0, 0,   0],
-                       [0, 1, 0,   0],
-                       [0, 0, 1, 0.1],
-                       [0, 0, 0,   1]])
-    Mhat12 = np.array([[ 0, 0, 1, 0.3],
-                       [ 0, 1, 0, 0.2],
-                       [-1, 0, 0,   0],
-                       [ 0, 0, 0,   1]])
-    Mhat23 = np.array([[1, 0, 0,    0],
-                       [0, 1, 0, -0.2],
-                       [0, 0, 1,  0.4],
-                       [0, 0, 0,    1]])
-    Mhat34 = np.array([[1, 0, 0,   0],
-                       [0, 1, 0,   0],
-                       [0, 0, 1, 0.2],
-                       [0, 0, 0,   1]])
-    Ghat1 = np.diag([0.1, 0.1, 0.1, 4, 4, 4])
-    Ghat2 = np.diag([0.3, 0.3, 0.1, 9, 9, 9])
-    Ghat3 = np.diag([0.1, 0.1, 0.1, 3, 3, 3])
-    Gtildelist = np.array([Ghat1, Ghat2, Ghat3])
-    Mtildelist = np.array([Mhat01, Mhat12, Mhat23, Mhat34])
-    Ftipmat = np.ones((np.array(traj).shape[0], 6))
-    Kp = 20
-    Ki = 10
-    Kd = 18
-    intRes = 8
-    taumat,thetamat \
-    = simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, \
-                         Glist, Slist, thetamatd, dthetamatd, \
-                         ddthetamatd, gtilde, Mtildelist, Gtildelist, \
-                         Kp, Ki, Kd, dt, intRes)
+    thetastart = np.array([1, 0, 0, 1, 1, 0.2, 0,1])
+    thetaend = np.array([1.2, 0.5, 0.6, 1.1, 2, 2, 0.9, 1])
+    Tf = 2
+    N = 100
+    method = 't'
+    thetalist = joint_trajectory(thetastart, thetaend, Tf, N, method, v = 1, a = None)
+    fig2d = plt.figure(figsize=(6, 4), num = 2)
+    plt.style.use('ggplot')
+    ax2d = fig2d.add_subplot(1, 1, 1)
+    line_set = thetalist[:, 0]
+    step_num = line_set.shape[0]  
+    step_list = np.linspace(0, step_num, step_num + 1)
+    plt.ion()
+    plt.grid('--')
+    # ax2d.set_xlim([0, step_num])
+    # ax2d.set_ylim([0, max(line_set) * 1.2])
+    ax2d.set_xlabel('x')
+    ax2d.set_ylabel('y')
+    ax2d.plot(line_set)

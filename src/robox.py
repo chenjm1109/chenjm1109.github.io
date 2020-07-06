@@ -55,11 +55,32 @@ class Robot:
                                 [1, 0, 0, 0, 0, -6.0],
                                 [1, 0, 0, 0, 0, -11.0]]).T # 螺旋轴
     
-    def forward_kinematics(self, thetalist, show = False):
-        ## 判断关节值向量的长度是否合法
-        joint_config = np.array(thetalist)
+    def redefine(self, Mlist, Slist, Glist):
+        self._Mlist = Mlist
+        self._Slist = Slist
+        self._Glist = Glist
+        
+    def show_robot(self):
         link_num = self._Slist.shape[1]
-        if joint_config.shape[0] != link_num :
+        thetalist = np.zeros(link_num)
+        self.forward_kinematics(thetalist, show = True)
+    
+    def forward_kinematics(self, thetalist, show = False):
+        '''
+        
+
+        Args:
+            thetalist (TYPE): DESCRIPTION.
+            show (TYPE, optional): DESCRIPTION. Defaults to False.
+
+        Returns:
+            Tlist (TYPE): DESCRIPTION.
+
+        '''
+        ## 判断关节值向量的长度是否合法
+        thetalist = np.array(thetalist)
+        link_num = self._Slist.shape[1]
+        if thetalist.shape[0] != link_num :
             print("请确保关节值向量的长度为%d"%link_num)
             return
         ## 求解正运动学
@@ -79,11 +100,13 @@ class Robot:
             ptb.show_robot(ax, Tlist, scale_value = 2.0)
         return Tlist
      
-    def inverse_kinematics(self, T, thetalist0, eomg = 0.01, ev = 0.001, maxiterations = 20):
+    def inverse_kinematics(self, T, thetalist0, show = False , eomg = 0.01, ev = 0.001, maxiterations = 20):
         thetalist, if_success = rtb.ikin_space(self._Slist, self._Mlist[-1], T, 
                                                thetalist0, eomg, ev,
                                                maxiterations)
         if if_success:
+            if show:
+                self.forward_kinematics(thetalist, show = True)
             return thetalist
         else:
             print("没有找到解")
@@ -157,6 +180,64 @@ class Robot:
                              ddthetamatd, gtilde, Mtildelist, Gtildelist, \
                              Kp, Ki, Kd, dt, intRes, method = "computed_torque")
 
+
+class Puma560(Robot):
+    def __init__(self, name = "xm_robot"):
+        ## 公有变量
+        self.name = name
+        self.joint_limit = np.array([[-2 * math.pi, 2 * math.pi]])
+        
+        ## 绘图参数
+        self._plot_limit = np.array([[-10, 10],
+                                     [-10, 10],
+                                     [-10, 10]])
+
+        ## 定义各连杆坐标系的初始坐位形Mlist
+        M00 = np.array([[1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0,-5.0],
+                        [0.0, 0.0, 0.0, 1.0]])
+        M01 = np.array([[0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0]])
+        M02 = np.array([[1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 5.0],
+                        [0.0, 0.0, 0.0, 1.0]])
+        M03 = np.array([[1.0, 0.0, 0.0, 0.0 ],
+                        [0.0, 1.0, 0.0, 4.0],
+                        [0.0, 0.0, 1.0, 5.0 ],
+                        [0.0, 0.0, 0.0, 1.0 ]])
+        M04 = np.array([[1.0, 0.0, 0.0, 0.0 ],
+                        [0.0, 1.0, 0.0, 7.0],
+                        [0.0, 0.0, 1.0, 5.0 ],
+                        [0.0, 0.0, 0.0, 1.0 ]])
+        M05 = np.array([[0.0, 1.0, 0.0, 0.0 ],
+                        [0.0, 0.0, 1.0, 7.0],
+                        [1.0, 0.0, 0.0, 5.0 ],
+                        [0.0, 0.0, 0.0, 1.0 ]])
+        M06 = np.array([[0.0, -1.0, 0.0, 0.0 ],
+                        [1.0, 0.0, 0.0, 7.0],
+                        [0.0, 0.0, 1.0, 5.0 ],
+                        [0.0, 0.0, 0.0, 1.0 ]])
+        G1 = np.diag([1, 1, 1, 1, 1, 1])
+        G2 = np.diag([1, 1, 1, 1, 1, 1])
+        G3 = np.diag([1, 1, 1, 1, 1, 1])
+        G4 = np.diag([1, 1, 1, 1, 1, 1])
+        G5 = np.diag([1, 1, 1, 1, 1, 1])
+        G6 = np.diag([1, 1, 1, 1, 1, 1])
+        self._Mlist = np.array([M00, M01, M02, M03, M04, M05, M06])
+        ## 各关节螺旋轴
+        self._Slist = np.array([[ 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                                [ 1.0, 0.0, 0.0, 0.0, 5.0, 0.0],
+                                [ 1.0, 0.0, 0.0, 0.0, 5.0,-4.0],
+                                [ 1.0, 0.0, 0.0, 0.0, 5.0,-7.0],
+                                [ 0.0, 0.0, 1.0, 7.0, 0.0, 0.0],
+                                [ 0.0, 1.0, 0.0,-5.0, 0.0, 0.0]]).T
+        self._Glist = np.array([G1, G2, G3, G4, G5, G6])
+        
+    
 if __name__ == "__main__":
     A = Robot()
     # thetalist = A.inverse_kinematics(T, thetalist0, maxiterations = 100)

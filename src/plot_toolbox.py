@@ -28,13 +28,16 @@ def show_robot(ax, Tlist, scale_value = 1.0):
     """
     ## 绘制连杆
     for i in range(Tlist.shape[0] - 1):
+        if i == 0:
+            linestyle = ":"
+        else:
+            linestyle = "-"
         ax.plot([Tlist[i, 0, 3], Tlist[i + 1, 0, 3]], 
                 [Tlist[i, 1, 3], Tlist[i + 1, 1, 3]],
                 [Tlist[i, 2, 3], Tlist[i + 1, 2, 3]],
-                color = "black", linewidth = 5.0)
+                color = "black", linewidth = 5.0, linestyle = linestyle)
     
     ## 绘制连杆坐标系
-    print(Tlist)
     for i in range(Tlist.shape[0]):
         show_frame(ax, Tlist[i], scale_value)
 
