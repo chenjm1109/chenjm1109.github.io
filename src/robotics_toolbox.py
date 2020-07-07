@@ -1252,6 +1252,53 @@ def euler_step(thetalist, dthetalist, ddthetalist, dt):
 *************** 轨迹规划函数 *****************
 *********************************************
 '''
+def cubic_trajectory(thetastart, thetaend, Tf, tv, 
+                     dthetastart = 0, dthetaend = 0):
+    """建立三次多项式轨迹。可指定边界速度，默认为0
+
+    Args:
+        thetastart (float): 初始位置.
+        thetaend (float): 目标位置.
+        Tf (TYPE): 运动总时长.
+        tv (TYPE): 采样时间数组。如果输入为标量，则取其为采样点数量。
+        dthetastart (float, optional): 初始速度. Defaults to 0.
+        dthetaend (float, optional): 目标速度. Defaults to 0.
+
+    Returns:
+        符合边界条件的三次多项式位置数组
+
+    """
+    ## 边界条件
+    s0 = thetastart
+    s1 = thetaend
+    v0 = dthetastart
+    v1 = dthetaend
+    
+    ## 计算多项式系数
+    a0 = s0
+    a1 = v0
+    a2 = (-3 * s0 + 3 * s1 - 2 * v0 * Tf - v1 * Tf) / (Tf ** 2)
+    a3 = (2 * s0 - 2 * s1 + v0 * Tf + v1 * Tf) / (Tf ** 3)
+    
+    ## 建立采样时间数组
+    assert((type(tv) == int) or (type(tv) == np.ndarray)), 'tv必须为整形或时间序列数组'
+    if type(tv) == int:
+        assert(tv > 0), '采样点数 tv 必须大于0'
+        tv = np.linspace(0, Tf, tv)
+    else:
+        assert(max(tv) < Tf), '时间序列数组 tv 的最大值不得大于总时长 Tf'
+    
+    traj = np.zeros(tv.shape[0])
+    for i in range(traj.shape[0]):
+        traj[i] = a0 + a1 * tv[i] + a2 * tv[i] ** 2 + a3 * tv[i] ** 3
+        
+    return traj
+        
+    
+    
+    
+    
+
 
 def cubic_time_scaling(Tf, t):
     """Computes s(t) for a cubic time scaling
@@ -1316,7 +1363,7 @@ def trapezoidal_time_scaling(Tf, t, v = None, a = None):
     
     
 
-def joint_trajectory(thetastart, thetaend, Tf, N, method, v = None, a = None):
+def joint_trajectory(thetastart, thetaend, Tf, N, method, v_trap = None, a_trap = None):
     """Computes a straight-line trajectory in joint space
     :param thetastart: The initial joint variables
     :param thetaend: The final joint variables
@@ -1353,10 +1400,24 @@ def joint_trajectory(thetastart, thetaend, Tf, N, method, v = None, a = None):
         elif method == 5:
             s = quintic_time_scaling(Tf, timegap * i)
         elif method == 't':
-            s = trapezoidal_time_scaling(Tf, timegap * i, v = v, a = a)
+            s = trapezoidal_time_scaling(Tf, timegap * i, v = v_trap, a = v_trap)
         traj[:, i] = s * np.array(thetaend) + (1 - s) * np.array(thetastart)
     traj = np.array(traj).T
     return traj
+
+def complete_traj(traj, Tf, dt):
+    """
+    """
+    N = int(1.0 * Tf / dt)
+    print(N)
+    thetamatd = np.array(traj).copy()
+    dthetamatd = np.zeros(N)
+    ddthetamatd = np.zeros(N)
+    dt = Tf / (N - 1.0)
+    for i in range(np.array(traj).shape[0] - 1):
+        dthetamatd[i + 1] = (thetamatd[i + 1] - thetamatd[i]) / dt
+        ddthetamatd[i + 1] = (dthetamatd[i + 1] - dthetamatd[i]) / dt
+    return thetamatd, dthetamatd, ddthetamatd
 
 def screw_trajectory(Xstart, Xend, Tf, N, method):
     """Computes a trajectory as a list of N SE(3) matrices corresponding to
@@ -1480,7 +1541,17 @@ def cartesian_trajectory(Xstart, Xend, Tf, N, method):
     return traj
 
 def multi_cubic_trajectory():
+    print()
+    
+def multi_para_trajectory(thetalist, dt, ):
+    """多段抛物线内插轨迹
+    
 
+    Returns:
+        None.
+
+    """
+    
 def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=None, qdf=None, verbose=False):
 
     """
@@ -1583,12 +1654,12 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
     else:
         assert len(qdf) == len(q0), 'qdf is wrong size'
 
-    # set the initial conditions
+    # 设 定 初 始 条 件
     q_prev = q0;
     qd_prev = qd0;
 
-    clock = 0     # keep track of time
-    arrive = np.zeros((ns,))   # record planned time of arrival at via points
+    clock = 0 # 记录时间
+    arrive = np.zeros((ns,)) # 记录到达路径点的规划时间
     tg = np.zeros((0,nj))
     infolist = []
     info = namedtuple('mstraj_info', 'slowest segtime axtime clock')
@@ -1597,9 +1668,9 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
         if verbose:
             print('------------------- segment %d\n' % (seg,))
 
-        # set the blend time, just half an interval for the first segment
+        # 设置加速段（混合）时间，对于第一段，只取标准加速时间的一半
 
-        tacc = Tacc[seg]
+        tacc = Tacc[seg] # 加速段时间（已经被扩展成为数组）
 
         tacc = math.ceil(tacc / dt) * dt
         tacc2 = math.ceil(tacc / 2 / dt) * dt
@@ -1608,10 +1679,10 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
         else:
             taccx = tacc
 
-        # estimate travel time
+        # 估计本段总时间 estimate travel time
         #    could better estimate distance travelled during the blend
-        q_next = viapoints[seg,:]    # current target
-        dq = q_next - q_prev    # total distance to move this segment
+        q_next = viapoints[seg,:]    # 当前的目标点
+        dq = q_next - q_prev    # 总位移
 
         ## probably should iterate over the next section to get qb right...
         # while 1
@@ -1622,10 +1693,11 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
         #   tl = abs(dq) ./ qdmax;
 
         if qdmax is not None:
+            # 如果指定了最大速度，则寻找最慢的轴。根据最慢的轴来确定本段时间
             # qdmax is specified, compute slowest axis
 
-            qb = taccx * qdmax / 2       # distance moved during blend
-            tb = taccx
+            qb = taccx * qdmax / 2 # 加速段的距离
+            tb = taccx # 加速段的时间
 
             # convert to time
             tl = abs(dq) / qdmax
@@ -1633,7 +1705,7 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
             tl = np.ceil(tl / dt) * dt
 
             # find the total time and slowest axis
-            tt = tb + tl
+            tt = tb + tl # 本段总时长 = 加速段时长 + 匀速段时长
             slowest = np.argmax(tt)
             tseg = tt[slowest]
 
@@ -1658,10 +1730,10 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
 
         ## create the trajectories for this segment
 
-        # linear velocity from qprev to qnext
+        # 本段的线性速度 linear velocity from qprev to qnext
         qd = dq / tseg
 
-        # add the blend polynomial
+        # 加入加速段 add the blend polynomial
         print(jtraj)
         qb = jtraj.jtraj(q0, q_prev + tacc2 * qd, np.arange(0, taccx, dt), qd0=qd_prev, qd1=qd).q
         tg = np.vstack([tg, qb[1:,:]])
@@ -1687,6 +1759,9 @@ def ms_trajectory(viapoints, dt, tacc, qdmax=None, tsegment=None, q0=None, qd0=N
     infolist.append(info(None, tseg, None, clock))
     
     return namedtuple('mstraj', 't q arrive info via')(dt * np.arange(0, tg.shape[0]), tg, arrive, infolist, viapoints)
+    
+
+
 
 '''
 *********************************************
@@ -2016,16 +2091,18 @@ def simulate_control(thetalist, dthetalist, g, Ftipmat, Mlist, Glist, Slist, the
 
 
 if __name__ == "__main__":
-    thetastart = np.array([1, 0, 0, 1, 1, 0.2, 0,1])
-    thetaend = np.array([1.2, 0.5, 0.6, 1.1, 2, 2, 0.9, 1])
+    thetastart = np.array([0.2, 0, 0, 1, 1, 0.2, 0,1])
+    thetaend = np.array([1.0, 0.5, 0.6, 1.1, 2, 2, 0.9, 1])
     Tf = 2
-    N = 100
+    N = 1000
+    dt = 1.0 * Tf / N
     method = 't'
-    thetalist = joint_trajectory(thetastart, thetaend, Tf, N, method, v = 1, a = None)
+    traj = cubic_trajectory(thetastart[0], thetaend[0], Tf, N)
+    thetamatd, dthetamatd, ddthetamatd = complete_traj(traj, Tf, dt)
     fig2d = plt.figure(figsize=(6, 4), num = 2)
     plt.style.use('ggplot')
     ax2d = fig2d.add_subplot(1, 1, 1)
-    line_set = thetalist[:, 0]
+    line_set = ddthetamatd
     step_num = line_set.shape[0]  
     step_list = np.linspace(0, step_num, step_num + 1)
     plt.ion()
